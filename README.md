@@ -1,5 +1,8 @@
 # jwlSyncFolderMerger
 
+[![CI](https://github.com/chaosben/jwlSyncFolderMerger/actions/workflows/ci.yml/badge.svg)](https://github.com/chaosben/jwlSyncFolderMerger/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Automatically merges the JW Library backups (`.jwlibrary`) of several devices into
 one common state – without any user interaction. It is meant for a synchronised
 folder (e.g. Syncthing) that all devices use to exchange their backups.
@@ -72,8 +75,9 @@ tool needs change events and fast file access; it does not talk to the cloud).
 
 ### Download
 
-Take the archive for your system from the releases page (built automatically for
-every version):
+Take the archive for your system from the
+[releases page](https://github.com/chaosben/jwlSyncFolderMerger/releases) (built
+automatically for every version):
 
 | Archive suffix                   | Platform                                                         |
 |----------------------------------|------------------------------------------------------------------|
@@ -265,3 +269,7 @@ JWLSFM_HISTORY=/dir1,/dir2      go test -tags realdata -run Replay -v ./internal
 ```
 
 Releases are built automatically by GoReleaser when a `v*` tag is pushed.
+
+## License
+
+[MIT](LICENSE)

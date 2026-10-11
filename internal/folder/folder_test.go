@@ -9,9 +9,9 @@ import (
 
 func TestSafeName(t *testing.T) {
 	for in, want := range map[string]string{
-		"Samsung_SM-X520": "Samsung_SM-X520",
-		"Ben's PC/1":      "Ben_s_PC_1",
-		"":                "unknown",
+		"Pixel_8-Pro": "Pixel_8-Pro",
+		"Jo's PC/1":   "Jo_s_PC_1",
+		"":            "unknown",
 	} {
 		if got := SafeName(in); got != want {
 			t.Errorf("SafeName(%q) = %q, want %q", in, got, want)

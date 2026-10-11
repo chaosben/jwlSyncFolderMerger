@@ -14,9 +14,9 @@ func TestOnWSLDrive(t *testing.T) {
 		wsl  bool
 		want bool
 	}{
-		{"/mnt/c/Users/Ben/Cloud", true, true},
+		{"/mnt/c/Users/me/Sync", true, true},
 		{"/mnt/D", true, true},
-		{"/mnt/c/Users/Ben/Cloud", false, false},
+		{"/mnt/c/Users/me/Sync", false, false},
 		{"/mnt/data/backups", true, false},
 		{"/home/ben/backups", true, false},
 	}
