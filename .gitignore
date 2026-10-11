@@ -1,0 +1,13 @@
+# real user data never belongs into the repository
+*.jwlibrary
+*.db
+*.db-wal
+*.db-shm
+
+# build output
+/dist/
+/jwlSyncFolderMerger
+/jwlSyncFolderMerger.exe
+
+# confidential
+/.claude/

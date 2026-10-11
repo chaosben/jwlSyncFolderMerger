@@ -1,0 +1,17 @@
+[Unit]
+Description=jwlSyncFolderMerger watch mode (%i)
+Documentation=https://github.com/chaosben/jwlSyncFolderMerger
+# Start after the sync tool if it runs as a user service; harmless otherwise.
+After=syncthing.service network-online.target
+
+[Service]
+Type=simple
+# One environment file per instance, e.g. ~/.config/jwlSyncFolderMerger/jwlibrary.env
+EnvironmentFile=%h/.config/jwlSyncFolderMerger/%i.env
+ExecStart=%h/.local/bin/jwlSyncFolderMerger -watch -sync ${JWLSFM_SYNC} $JWLSFM_ARGS ${JWLSFM_DIR}
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=default.target
