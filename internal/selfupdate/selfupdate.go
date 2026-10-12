@@ -293,6 +293,7 @@ func replace(newExe, exe string) error {
 		}
 		return err
 	}
+	os.Remove(old) // fails while the old executable still runs; CleanupOld retries later
 	return nil
 }
 
