@@ -18,6 +18,16 @@ runs without a console window and restarts after failures.
 
    If script execution is blocked: `powershell -ExecutionPolicy Bypass -File .\install-task.ps1 …`
 
+## Updates
+
+The task installs new releases by itself (see "Automatic updates" in the main
+README): `%LOCALAPPDATA%\jwlSyncFolderMerger` is writable for your user. Windows cannot
+replace a running program, so the old executable is renamed to
+`jwlSyncFolderMerger.exe.old-…` and stays as a small waiting parent process of the new
+version until the task ends; leftover `.old-…` files are removed at the next start.
+Stopping the task stops both processes. To turn updates off, install the task with
+`-ExtraArgs "-no-auto-update"`.
+
 ## Operate
 
 - Log: `%LOCALAPPDATA%\jwlSyncFolderMerger\watch.log`

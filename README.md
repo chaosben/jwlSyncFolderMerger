@@ -211,6 +211,7 @@ that JW Library keeps when restoring and in its next backup.
 
 ```
 jwlSyncFolderMerger [flags] <folder>
+jwlSyncFolderMerger -update [-dry-run]
 
   -dry-run                only report what would happen
   -sync generic|syncthing conventions of the sync tool (temp/conflict files)
@@ -222,6 +223,9 @@ jwlSyncFolderMerger [flags] <folder>
   -watch                  keep running and merge whenever new backups arrive
   -debounce 15s           watch mode: quiet time after the last change
   -poll 0                 watch mode: polling interval (0 = 6h with change events, 5m without)
+  -no-auto-update         watch mode: do not install new releases automatically
+  -update-interval 24h    watch mode: how often to check for a new release (at least 1h)
+  -update                 install the latest release and exit (with -dry-run: only check)
   -log-format text|json, -v, -version
 ```
 
@@ -243,8 +247,41 @@ The tool's own writes (`current.jwlibrary`, `archive/`) do not trigger runs.
   other errors are retried with increasing delay.
 - A missing folder at start is an error (exit code 1); later outages are retried.
 - Stop with Ctrl+C / SIGTERM (exit code 0).
+- New releases are installed automatically, see [Automatic updates](#automatic-updates).
 
 Service configurations and adding sync tools: see [integrations/](integrations/).
+
+## Automatic updates
+
+Like Syncthing, the watch mode keeps itself up to date:
+
+- It checks GitHub for a new release right after the start (before the first merge)
+  and then every `-update-interval` (default 24 hours, at least 1 hour). A failed
+  check (e.g. no network yet after booting) is retried after an hour.
+- It only installs a newer release of the **same major version** (e.g. 1.2.0 → 1.3.0).
+  A new major version may change behaviour; the log says so, and you update manually.
+- Every download is verified before anything is replaced: `checksums.txt` must carry
+  a valid [minisign](https://jedisct1.github.io/minisign/) signature from the release
+  key built into the program ([keys/release_sign.pub](keys/release_sign.pub)), the
+  archive must match its checksum, and the new executable must report the expected
+  version.
+- The executable is replaced and the process restarts itself with the same arguments
+  (on Linux and macOS with the same process id, on Windows the old process waits for
+  the new one). Updates only happen between merges, never during one.
+- No update happens with `-no-auto-update`, with `-dry-run`, for self-built
+  development versions, or if the executable's directory is not writable (e.g.
+  installed by a package manager) – the log says why at start.
+- The tool contacts `api.github.com` and `github.com` for this, nothing else.
+
+One-off runs (manual, cron, Task Scheduler) never update by themselves. Use
+`jwlSyncFolderMerger -update` (or `-update -dry-run` to only check).
+
+To verify a downloaded release by hand:
+
+```
+minisign -Vm checksums.txt -p keys/release_sign.pub
+sha256sum --ignore-missing -c checksums.txt
+```
 
 ## Limitations
 
@@ -269,6 +306,11 @@ JWLSFM_HISTORY=/dir1,/dir2      go test -tags realdata -run Replay -v ./internal
 ```
 
 Releases are built automatically by GoReleaser when a `v*` tag is pushed.
+`checksums.txt` is signed with minisign; the secret key is the repository secret
+`MINISIGN_SECRET_KEY` (a key without password, `minisign -G -W`), its public key is
+[keys/release_sign.pub](keys/release_sign.pub) and must match
+`internal/selfupdate/keys.go` (a test checks this). To rotate the key, add the new
+public key to `keys.go`, release once, then switch the secret.
 
 ## License
 

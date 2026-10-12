@@ -40,6 +40,24 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# checksums.txt is signed with minisign; the self-updater only installs archives
+# whose checksum is listed in a correctly signed checksums.txt
+# (public key: keys/release_sign.pub, built into internal/selfupdate/keys.go).
+signs:
+  - cmd: minisign
+    artifacts: checksum
+    signature: "${artifact}.minisig"
+    args:
+      - -S
+      - -s
+      - "{{ .Env.MINISIGN_KEY_FILE }}"
+      - -t
+      - "{{ .ProjectName }} {{ .Version }}"
+      - -m
+      - "${artifact}"
+      - -x
+      - "${signature}"
+
 changelog:
   sort: asc
   filters:

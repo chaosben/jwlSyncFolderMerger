@@ -25,7 +25,16 @@ type Config struct {
 	PendingRetry time.Duration // retry delay for backups that were still syncing (default 2m)
 	Restart      time.Duration // pause before restarting a failed watcher (default 1m)
 	Log          *slog.Logger
+	// Update, if set, installs a new version and reports whether the process
+	// must restart. It runs before the first merge and then every UpdateEvery,
+	// never during a merge.
+	Update      func(ctx context.Context) (restart bool, err error)
+	UpdateEvery time.Duration // default 24h
+	UpdateRetry time.Duration // retry after a failed check (default 1h, at most UpdateEvery)
 }
+
+// ErrRestart is returned by Loop after Update installed a new version.
+var ErrRestart = errors.New("restart after update")
 
 func (c *Config) defaults() {
 	if c.Debounce <= 0 {
@@ -46,14 +55,34 @@ func (c *Config) defaults() {
 	if c.Log == nil {
 		c.Log = slog.Default()
 	}
+	if c.UpdateEvery <= 0 {
+		c.UpdateEvery = 24 * time.Hour
+	}
+	if c.UpdateRetry <= 0 {
+		c.UpdateRetry = time.Hour
+	}
 }
 
 const maxBackoff = 30 * time.Minute
 
-// Loop runs until ctx is cancelled. It runs once at start, then after every
-// burst of changes, on the poll interval and when a retry is due.
+// Loop runs until ctx is cancelled or an update requires a restart
+// (ErrRestart). It runs once at start, then after every burst of changes, on
+// the poll interval and when a retry is due.
 func Loop(ctx context.Context, cfg Config) error {
 	cfg.defaults()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel() // stops the watcher before a restart
+	update := stoppedTimer()
+	if cfg.Update != nil {
+		next, restart := runUpdate(ctx, cfg)
+		if restart {
+			return ErrRestart
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		reset(update, next)
+	}
 	signals := make(chan string, 1)
 	notify := func(reason string) {
 		select {
@@ -112,8 +141,28 @@ func Loop(ctx context.Context, cfg Config) error {
 			runNow = true
 		case <-poll.C:
 			runNow = true
+		case <-update.C:
+			next, restart := runUpdate(ctx, cfg)
+			if restart {
+				return ErrRestart
+			}
+			reset(update, next)
 		}
 	}
+}
+
+// runUpdate checks for a new version and returns the delay until the next check.
+func runUpdate(ctx context.Context, cfg Config) (next time.Duration, restart bool) {
+	restart, err := cfg.Update(ctx)
+	if restart {
+		return 0, true
+	}
+	if err != nil && ctx.Err() == nil {
+		retry := min(cfg.UpdateEvery, cfg.UpdateRetry)
+		cfg.Log.Warn("update check failed", "err", err, "retry_in", retry)
+		return retry, false
+	}
+	return cfg.UpdateEvery, false
 }
 
 // runOnce performs a merge and returns the delay for a retry (0 = none).

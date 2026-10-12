@@ -176,3 +176,100 @@ func TestCancelStops(t *testing.T) {
 	waitFor(t, "initial run", func() bool { return f.count() == 1 })
 	cancel() // cleanup verifies that the loop returns
 }
+
+type fakeUpdate struct {
+	mu      sync.Mutex
+	calls   int
+	results []func() (bool, error) // per call; last one repeats
+}
+
+func (f *fakeUpdate) update(context.Context) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := min(f.calls, len(f.results)-1)
+	f.calls++
+	return f.results[i]()
+}
+
+func (f *fakeUpdate) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func noUpdate() (bool, error)     { return false, nil }
+func updated() (bool, error)      { return true, nil }
+func updateFailed() (bool, error) { return false, errors.New("network down") }
+
+// loop runs Loop directly and returns its result.
+func loop(t *testing.T, f *fakeRun, u *fakeUpdate, mod func(*Config)) <-chan error {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	cfg := Config{
+		Run: f.run, Adapter: pollingAdapter{}, Dir: t.TempDir(),
+		Debounce: 50 * time.Millisecond, Poll: time.Hour, FallbackPoll: time.Hour,
+		Update: u.update, UpdateEvery: time.Hour,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	if mod != nil {
+		mod(&cfg)
+	}
+	res := make(chan error, 1)
+	go func() { res <- Loop(ctx, cfg) }()
+	return res
+}
+
+func TestUpdateBeforeFirstRun(t *testing.T) {
+	f := &fakeRun{results: []func() (*app.Report, error){ok}}
+	u := &fakeUpdate{results: []func() (bool, error){updated}}
+	select {
+	case err := <-loop(t, f, u, nil):
+		if !errors.Is(err, ErrRestart) {
+			t.Fatalf("err = %v, want ErrRestart", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not return")
+	}
+	if f.count() != 0 {
+		t.Errorf("merges = %d, want 0 before the restart", f.count())
+	}
+}
+
+func TestUpdateRepeatsAndRestarts(t *testing.T) {
+	f := &fakeRun{results: []func() (*app.Report, error){ok}}
+	u := &fakeUpdate{results: []func() (bool, error){noUpdate, noUpdate, noUpdate, updated}}
+	res := loop(t, f, u, func(c *Config) { c.UpdateEvery = 40 * time.Millisecond })
+	select {
+	case err := <-res:
+		if !errors.Is(err, ErrRestart) {
+			t.Fatalf("err = %v, want ErrRestart", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("loop did not return")
+	}
+	if u.count() != 4 || f.count() != 1 {
+		t.Errorf("update checks = %d (want 4), merges = %d (want 1)", u.count(), f.count())
+	}
+}
+
+func TestFailedUpdateIsRetriedSooner(t *testing.T) {
+	f := &fakeRun{results: []func() (*app.Report, error){ok}}
+	u := &fakeUpdate{results: []func() (bool, error){updateFailed}}
+	loop(t, f, u, func(c *Config) { c.UpdateRetry = 40 * time.Millisecond })
+	waitFor(t, "update retries", func() bool { return u.count() >= 3 })
+	if f.count() != 1 {
+		t.Errorf("merges = %d, want 1", f.count())
+	}
+}
+
+func TestUpdateIntervalAfterSuccess(t *testing.T) {
+	f := &fakeRun{results: []func() (*app.Report, error){ok}}
+	u := &fakeUpdate{results: []func() (bool, error){noUpdate}}
+	loop(t, f, u, func(c *Config) { c.UpdateRetry = 40 * time.Millisecond })
+	waitFor(t, "first merge", func() bool { return f.count() == 1 })
+	time.Sleep(200 * time.Millisecond)
+	if u.count() != 1 {
+		t.Errorf("update checks = %d, want 1 within the hourly interval", u.count())
+	}
+}

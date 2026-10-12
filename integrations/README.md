@@ -14,6 +14,9 @@ There are two kinds of integrations:
 | [windows/](windows/)   | scheduled task (at log on, no window, restart on failure) |
 | [macos/](macos/)       | launchd agent (at log on, restart on failure)             |
 
+All of them install the executable in a directory owned by the user, so the watch
+mode can update itself (see "Automatic updates" in the main README).
+
 ## Sync adapters
 
 | `-sync`     | Change notification          | Notes                                   |

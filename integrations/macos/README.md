@@ -31,6 +31,13 @@ If the backup folder is in a protected location (Desktop, Documents, iCloud
 Drive), macOS asks for permission on first access, or you grant the executable
 "Full Disk Access" in System Settings → Privacy & Security.
 
+## Updates
+
+The agent installs new releases by itself (see "Automatic updates" in the main
+README): `~/bin` is writable for your user, and the new version continues in the
+same process. To turn this off, add `<string>-no-auto-update</string>` to
+`ProgramArguments`.
+
 ## Operate
 
 - Log: `~/Library/Logs/jwlSyncFolderMerger.log`

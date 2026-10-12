@@ -16,6 +16,7 @@ import (
 
 	"github.com/chaosben/jwlSyncFolderMerger/internal/app"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/folder"
+	"github.com/chaosben/jwlSyncFolderMerger/internal/selfupdate"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/syncadapter"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/watch"
 )
@@ -43,10 +44,13 @@ func run() int {
 		watchMode bool
 		debounce  time.Duration
 		poll      time.Duration
+		noUpdate  bool
+		update    bool
+		updateInt time.Duration
 	)
 	fs := flag.NewFlagSet("jwlSyncFolderMerger", flag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: jwlSyncFolderMerger [flags] <backup folder>\n\nMerges all JW Library backups in the folder into current.jwlibrary.\n\nFlags:\n")
+		fmt.Fprintf(fs.Output(), "Usage: jwlSyncFolderMerger [flags] <backup folder>\n       jwlSyncFolderMerger -update\n\nMerges all JW Library backups in the folder into current.jwlibrary.\n\nFlags:\n")
 		fs.PrintDefaults()
 	}
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "only report what would happen, change nothing")
@@ -59,6 +63,9 @@ func run() int {
 	fs.BoolVar(&watchMode, "watch", false, "keep running and merge whenever new backups arrive")
 	fs.DurationVar(&debounce, "debounce", 15*time.Second, "watch mode: quiet time after the last change before merging")
 	fs.DurationVar(&poll, "poll", 0, "watch mode: polling interval (default 6h with change events, 5m without)")
+	fs.BoolVar(&noUpdate, "no-auto-update", false, "watch mode: do not install new releases automatically")
+	fs.DurationVar(&updateInt, "update-interval", 24*time.Hour, "watch mode: how often to check for a new release (at least 1h)")
+	fs.BoolVar(&update, "update", false, "install the latest release and exit (with -dry-run: only check)")
 	fs.StringVar(&logFormat, "log-format", "text", "log format: text or json")
 	fs.BoolVar(&verbose, "v", false, "verbose logging (every conflict decision)")
 	fs.BoolVar(&showVer, "version", false, "print version and exit")
@@ -69,12 +76,6 @@ func run() int {
 		fmt.Println("jwlSyncFolderMerger", version)
 		return exitOK
 	}
-	if fs.NArg() != 1 {
-		fs.Usage()
-		return exitError
-	}
-	cfg.Dir = fs.Arg(0)
-	cfg.DeviceExpiry = time.Duration(expiry) * 24 * time.Hour
 
 	level := slog.LevelInfo
 	if verbose {
@@ -90,6 +91,20 @@ func run() int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	if update {
+		return selfUpdate(ctx, cfg.Log, cfg.DryRun)
+	}
+	if fs.NArg() != 1 {
+		fs.Usage()
+		return exitError
+	}
+	cfg.Dir = fs.Arg(0)
+	cfg.DeviceExpiry = time.Duration(expiry) * 24 * time.Hour
+	if err := selfupdate.ValidateInterval(updateInt); err != nil {
+		cfg.Log.Error(err.Error())
+		return exitError
+	}
+
 	if watchMode {
 		// a missing folder at start is a configuration error; later outages are retried
 		if info, err := os.Stat(cfg.Dir); err != nil || !info.IsDir() {
@@ -102,7 +117,7 @@ func run() int {
 			return exitError
 		}
 		cfg.Log.Info("watching", "folder", cfg.Dir, "sync", cfg.Sync, "version", version)
-		err = watch.Loop(ctx, watch.Config{
+		wcfg := watch.Config{
 			Run:          func(ctx context.Context) (*app.Report, error) { return app.Run(ctx, cfg) },
 			Adapter:      ad,
 			Dir:          cfg.Dir,
@@ -111,7 +126,27 @@ func run() int {
 			FallbackPoll: poll,
 			PendingRetry: cfg.MinAge,
 			Log:          cfg.Log,
-		})
+		}
+		var up *selfupdate.Updater
+		switch {
+		case noUpdate:
+			cfg.Log.Info("automatic updates disabled", "reason", "-no-auto-update")
+		case cfg.DryRun:
+			cfg.Log.Info("automatic updates disabled", "reason", "-dry-run")
+		default:
+			if up = updater(cfg.Log); up != nil {
+				wcfg.Update, wcfg.UpdateEvery = up.Update, updateInt
+			}
+		}
+		err = watch.Loop(ctx, wcfg)
+		if errors.Is(err, watch.ErrRestart) {
+			code, err := up.Restart()
+			if err != nil {
+				cfg.Log.Error(err.Error())
+				return exitError
+			}
+			return code
+		}
 		if err != nil {
 			cfg.Log.Error(err.Error())
 			return exitError
@@ -138,5 +173,55 @@ func run() int {
 		"removed_highlights", rep.Loss.Marks, "removed_notes", rep.Loss.Notes,
 		"divergent_paragraph_groups", s.DivergentGroup, "moved_bookmarks", s.MovedBookmarks, "lost_bookmarks", s.LostBookmarks,
 		"dry_run", cfg.DryRun)
+	return exitOK
+}
+
+// updater returns the self-updater for watch mode, or nil if this
+// installation cannot update itself.
+func updater(log *slog.Logger) *selfupdate.Updater {
+	up, err := selfupdate.New(version, log)
+	if err == nil {
+		err = up.Supported()
+	}
+	if err != nil {
+		log.Info("automatic updates disabled", "reason", err)
+		return nil
+	}
+	up.CleanupOld()
+	return up
+}
+
+// selfUpdate implements -update.
+func selfUpdate(ctx context.Context, log *slog.Logger, dryRun bool) int {
+	up, err := selfupdate.New(version, log)
+	if err == nil {
+		err = up.Supported()
+	}
+	if err != nil {
+		log.Error("cannot update", "err", err)
+		return exitError
+	}
+	up.CleanupOld()
+	if dryRun {
+		rel, err := up.Check(ctx)
+		switch {
+		case err != nil:
+			log.Error(err.Error())
+			return exitError
+		case rel != nil:
+			log.Info("dry-run: would update", "version", version, "new_version", rel.Version)
+		default:
+			log.Info("up to date", "version", version)
+		}
+		return exitOK
+	}
+	updated, err := up.Update(ctx)
+	if err != nil {
+		log.Error(err.Error())
+		return exitError
+	}
+	if !updated {
+		log.Info("up to date", "version", version)
+	}
 	return exitOK
 }

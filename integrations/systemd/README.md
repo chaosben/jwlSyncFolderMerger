@@ -41,5 +41,14 @@ again when the next backup arrives.
 | `JWLSFM_SYNC` | `generic` or `syncthing` (required)                  |
 | `JWLSFM_ARGS` | further flags, e.g. `-debounce 30s -poll 1h`         |
 
+## Updates
+
+The service installs new releases by itself (see "Automatic updates" in the main
+README): `~/.local/bin` is writable for your user, the new version replaces the
+executable and continues in the same process, so systemd notices nothing. To turn
+this off, add `-no-auto-update` to `JWLSFM_ARGS`; `-update-interval 6h` changes the
+check interval. An executable installed system-wide (e.g. `/usr/local/bin`, owned by
+root) is not updated – the log says so at start.
+
 If the folder lies on a filesystem without change events (network mounts, a Windows
 drive under WSL), the service falls back to polling (`-poll`, default 5 minutes).

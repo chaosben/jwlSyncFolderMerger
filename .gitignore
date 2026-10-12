@@ -9,5 +9,8 @@
 /jwlSyncFolderMerger
 /jwlSyncFolderMerger.exe
 
+# minisign secret keys belong into GitHub secrets only
+*.key
+
 # confidential
 /.claude/
