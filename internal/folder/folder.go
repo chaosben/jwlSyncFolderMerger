@@ -1,6 +1,7 @@
 // Package folder knows the layout of the backup folder:
 //
 //	<root>/current.jwlibrary                      merged result, restored on every device
+//	<root>/jwlsfm_status.html                     status page (state and recent events)
 //	<root>/*.jwlibrary                            incoming device backups
 //	<root>/archive/generations/current_*.jwlibrary previous merged results
 //	<root>/archive/devices/<device>.jwlibrary     last processed backup per device
@@ -21,12 +22,14 @@ import (
 
 const (
 	CurrentName = "current.jwlibrary"
+	StatusName  = "jwlsfm_status.html"
 	Ext         = ".jwlibrary"
 )
 
 type Layout struct{ Root string }
 
 func (l Layout) Current() string     { return filepath.Join(l.Root, CurrentName) }
+func (l Layout) Status() string      { return filepath.Join(l.Root, StatusName) }
 func (l Layout) Archive() string     { return filepath.Join(l.Root, "archive") }
 func (l Layout) Generations() string { return filepath.Join(l.Archive(), "generations") }
 func (l Layout) Devices() string     { return filepath.Join(l.Archive(), "devices") }

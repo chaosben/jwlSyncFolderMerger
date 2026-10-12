@@ -7,11 +7,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/chaosben/jwlSyncFolderMerger/internal/folder"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/merge"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/model"
+	"github.com/chaosben/jwlSyncFolderMerger/internal/status"
 	tu "github.com/chaosben/jwlSyncFolderMerger/internal/testutil"
 )
 
@@ -385,5 +388,100 @@ func TestGenerationsPruned(t *testing.T) {
 	}
 	if len(e.current().UserMarks) != 5 {
 		t.Errorf("current marks = %d", len(e.current().UserMarks))
+	}
+}
+
+func (e *env) withStatus(c *Config) {
+	lay := folder.Layout{Root: e.dir}
+	c.Status = status.New(e.dir, folder.StatusName, lay.TempDir(), 50, "test", c.Log)
+}
+
+func (e *env) statusPage() string {
+	e.t.Helper()
+	b, err := os.ReadFile(filepath.Join(e.dir, folder.StatusName))
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return string(b)
+}
+
+// devicesRow returns the table row of a device on the status page.
+func devicesRow(page, device string) string {
+	i := strings.Index(page, "<tr><td>"+device+"</td>")
+	if i < 0 {
+		return ""
+	}
+	return page[i : i+strings.Index(page[i:], "</tr>")]
+}
+
+func TestStatusPage(t *testing.T) {
+	e := newEnv(t)
+	e.put("A", tu.Date(1, 10), tu.New().Mark("m1", 1, 1, 0, 5, 1).DB)
+	e.put("B", tu.Date(2, 10), tu.New().Mark("m2", 2, 1, 0, 9, 2).DB)
+	e.mustRun(tu.Date(3, 0), e.withStatus)
+	page := e.statusPage()
+	for _, want := range []string{"Merged new backups of A, B", `class="banner ok"`, "2 highlights"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("after merge: page lacks %q", want)
+		}
+	}
+	if row := devicesRow(page, "A"); !strings.Contains(row, "never") {
+		t.Errorf("A has not restored current yet: %q", row)
+	}
+	events := strings.Count(page, `<tr class="k-`)
+
+	// nothing new: only the head changes
+	e.mustRun(tu.Date(4, 0), e.withStatus)
+	if got := strings.Count(e.statusPage(), `<tr class="k-`); got != events {
+		t.Errorf("events after a run without new backups = %d, want %d", got, events)
+	}
+
+	// A restores current and sends a backup of it
+	e.put("A", tu.Date(5, 10), tu.Clone(e.current()))
+	e.mustRun(tu.Date(6, 0), e.withStatus)
+	page = e.statusPage()
+	if row := devicesRow(page, "A"); !strings.Contains(row, "yes") {
+		t.Errorf("A restored current: %q", row)
+	}
+	if row := devicesRow(page, "B"); !strings.Contains(row, "never") {
+		t.Errorf("B has not restored current: %q", row)
+	}
+	if !strings.Contains(page, "Processed new backups of A") {
+		t.Error("unchanged run not logged")
+	}
+
+	// dry runs never write
+	os.Remove(filepath.Join(e.dir, folder.StatusName))
+	e.put("B", tu.Date(7, 10), tu.New().Mark("m2", 2, 1, 0, 9, 2).Mark("m3", 3, 1, 0, 1, 1).DB)
+	e.mustRun(tu.Date(8, 0), e.withStatus, func(c *Config) { c.DryRun = true })
+	if _, err := os.Stat(filepath.Join(e.dir, folder.StatusName)); !os.IsNotExist(err) {
+		t.Errorf("dry run wrote the status page: %v", err)
+	}
+}
+
+func TestStatusPageShowsGuard(t *testing.T) {
+	e := newEnv(t)
+	b := tu.New()
+	for i := int64(0); i < 60; i++ {
+		b.Mark("g"+string(rune('A'+i%26))+string(rune('a'+i/26)), 1, i+1, 0, 3, 1)
+	}
+	e.put("A", tu.Date(1, 10), b.DB)
+	e.mustRun(tu.Date(2, 0), e.withStatus)
+	wiped := tu.Clone(e.current())
+	for g := range wiped.UserMarks {
+		delete(wiped.UserMarks, g)
+		if len(wiped.UserMarks) == 5 {
+			break
+		}
+	}
+	e.put("A", tu.Date(3, 10), wiped)
+	if _, err := e.run(tu.Date(4, 0), e.withStatus); !errors.Is(err, ErrGuard) {
+		t.Fatalf("expected guard error, got %v", err)
+	}
+	page := e.statusPage()
+	for _, want := range []string{`class="banner error"`, "Aborted, nothing changed", "60 highlights"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page lacks %q", want)
+		}
 	}
 }

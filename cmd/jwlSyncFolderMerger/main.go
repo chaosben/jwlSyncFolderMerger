@@ -17,6 +17,7 @@ import (
 	"github.com/chaosben/jwlSyncFolderMerger/internal/app"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/folder"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/selfupdate"
+	"github.com/chaosben/jwlSyncFolderMerger/internal/status"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/syncadapter"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/watch"
 )
@@ -47,6 +48,7 @@ func run() int {
 		noUpdate  bool
 		update    bool
 		updateInt time.Duration
+		statusLen int
 	)
 	fs := flag.NewFlagSet("jwlSyncFolderMerger", flag.ContinueOnError)
 	fs.Usage = func() {
@@ -66,6 +68,7 @@ func run() int {
 	fs.BoolVar(&noUpdate, "no-auto-update", false, "watch mode: do not install new releases automatically")
 	fs.DurationVar(&updateInt, "update-interval", 24*time.Hour, "watch mode: how often to check for a new release (at least 1h)")
 	fs.BoolVar(&update, "update", false, "install the latest release and exit (with -dry-run: only check)")
+	fs.IntVar(&statusLen, "status-entries", 50, "number of recent events on the status page "+folder.StatusName+" (0 = no status page)")
 	fs.StringVar(&logFormat, "log-format", "text", "log format: text or json")
 	fs.BoolVar(&verbose, "v", false, "verbose logging (every conflict decision)")
 	fs.BoolVar(&showVer, "version", false, "print version and exit")
@@ -104,6 +107,14 @@ func run() int {
 		cfg.Log.Error(err.Error())
 		return exitError
 	}
+	if statusLen < 0 {
+		cfg.Log.Error("-status-entries must not be negative")
+		return exitError
+	}
+	if !cfg.DryRun {
+		lay := folder.Layout{Root: cfg.Dir}
+		cfg.Status = status.New(cfg.Dir, folder.StatusName, lay.TempDir(), statusLen, version, cfg.Log)
+	}
 
 	if watchMode {
 		// a missing folder at start is a configuration error; later outages are retried
@@ -128,16 +139,29 @@ func run() int {
 			Log:          cfg.Log,
 		}
 		var up *selfupdate.Updater
+		var reason string
 		switch {
 		case noUpdate:
-			cfg.Log.Info("automatic updates disabled", "reason", "-no-auto-update")
+			reason = "-no-auto-update"
 		case cfg.DryRun:
-			cfg.Log.Info("automatic updates disabled", "reason", "-dry-run")
+			reason = "-dry-run"
 		default:
-			if up = updater(cfg.Log); up != nil {
-				wcfg.Update, wcfg.UpdateEvery = up.Update, updateInt
-			}
+			up, reason = updater(cfg.Log)
 		}
+		autoUpdate := "on, every " + updateInt.String()
+		if up != nil {
+			wcfg.Update, wcfg.UpdateEvery = statusUpdate(up, cfg.Status), updateInt
+		} else {
+			cfg.Log.Info("automatic updates disabled", "reason", reason)
+			autoUpdate = "off (" + reason + ")"
+		}
+		expect := poll
+		if expect <= 0 {
+			expect = 6 * time.Hour // the watch loop's default safety-net poll
+		}
+		mode := status.Mode{Watch: true, Since: time.Now(), AutoUpdate: autoUpdate, Expect: expect + 15*time.Minute}
+		cfg.Status.SetMode(mode)
+		cfg.Status.Event(status.Entry{Time: time.Now(), Kind: status.KindStart, Text: "Watch mode started, version " + version})
 		err = watch.Loop(ctx, wcfg)
 		if errors.Is(err, watch.ErrRestart) {
 			code, err := up.Restart()
@@ -152,6 +176,9 @@ func run() int {
 			return exitError
 		}
 		cfg.Log.Info("stopped")
+		mode.Stopped = time.Now()
+		cfg.Status.SetMode(mode)
+		cfg.Status.Event(status.Entry{Time: mode.Stopped, Kind: status.KindStop, Text: "Watch mode stopped"})
 		return exitOK
 	}
 
@@ -176,19 +203,34 @@ func run() int {
 	return exitOK
 }
 
-// updater returns the self-updater for watch mode, or nil if this
-// installation cannot update itself.
-func updater(log *slog.Logger) *selfupdate.Updater {
+// updater returns the self-updater for watch mode, or nil and the reason why
+// this installation cannot update itself.
+func updater(log *slog.Logger) (*selfupdate.Updater, string) {
 	up, err := selfupdate.New(version, log)
 	if err == nil {
 		err = up.Supported()
 	}
 	if err != nil {
-		log.Info("automatic updates disabled", "reason", err)
-		return nil
+		return nil, err.Error()
 	}
 	up.CleanupOld()
-	return up
+	return up, ""
+}
+
+// statusUpdate runs an update check and reports installed versions and
+// failures on the status page.
+func statusUpdate(up *selfupdate.Updater, st *status.Writer) func(context.Context) (bool, error) {
+	return func(ctx context.Context) (bool, error) {
+		updated, err := up.Update(ctx)
+		switch {
+		case updated:
+			st.Event(status.Entry{Time: time.Now(), Kind: status.KindUpdate,
+				Text: "New version installed (was " + version + "), restarting"})
+		case err != nil && ctx.Err() == nil:
+			st.Event(status.Entry{Time: time.Now(), Kind: status.KindWarning, Text: "Update check failed: " + err.Error()})
+		}
+		return updated, err
+	}
 }
 
 // selfUpdate implements -update.

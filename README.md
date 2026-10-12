@@ -170,6 +170,7 @@ xattr -d com.apple.quarantine ~/bin/jwlSyncFolderMerger   # downloaded binaries 
 ```
 <folder>/
   current.jwlibrary                       result – restore this backup on the devices
+  jwlsfm_status.html                      status page – open it in a browser
   UserdataBackup_…_<device>.jwlibrary     new device backups (any file name)
   archive/devices/<device>.jwlibrary      last processed backup per device
   archive/generations/current_*.jwlibrary previous results (default: 5)
@@ -177,6 +178,28 @@ xattr -d com.apple.quarantine ~/bin/jwlSyncFolderMerger   # downloaded binaries 
 
 Processed backups are moved to the archive or deleted. Files that are still being
 synchronised (`-min-age`), unreadable, or have an unknown schema are left untouched.
+
+## Status page
+
+The tool usually runs unattended on another machine. To see what it is doing,
+open `jwlsfm_status.html` in the backup folder – your sync tool brings it to every
+device, so a browser or file manager on your phone is enough.
+
+- **At the top**: the overall state (ok / warning / error, with the error message),
+  machine and version, watch mode or one-off runs, automatic updates, the last run
+  and the last merge, the content of `current.jwlibrary`, and every known device
+  with its last backup and whether it has restored the current `current.jwlibrary`.
+- **Below**: the most recent events, newest first – merges, processed backups that
+  changed nothing, aborts by the safety check, errors, warnings, installed updates,
+  start and stop of the watch mode. Runs without new backups only refresh the top
+  part; the same warning or error is listed at most once a day.
+- `-status-entries` sets how many events are kept (default 50); `0` turns the page
+  off. `-dry-run` never writes it.
+- In watch mode the page states when the next update is due at the latest; if it is
+  older than that, it shows a warning that the tool is probably not running.
+
+The page is a single self-contained file without external resources; it also
+stores its own data, so one-off runs continue the same event log.
 
 ## How merging works
 
@@ -226,6 +249,7 @@ jwlSyncFolderMerger -update [-dry-run]
   -no-auto-update         watch mode: do not install new releases automatically
   -update-interval 24h    watch mode: how often to check for a new release (at least 1h)
   -update                 install the latest release and exit (with -dry-run: only check)
+  -status-entries 50      events kept on the status page (0 = no status page)
   -log-format text|json, -v, -version
 ```
 

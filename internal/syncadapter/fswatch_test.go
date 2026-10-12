@@ -88,6 +88,8 @@ func TestWatchDir(t *testing.T) {
 	expectNone("syncthing temp file")
 	write("notes.txt")
 	expectNone("other file")
+	write("jwlsfm_status.html")
+	expectNone("status page")
 	os.Mkdir(filepath.Join(dir, "archive"), 0o755)
 	write(filepath.Join("archive", "old.jwlibrary"))
 	expectNone("file in archive")

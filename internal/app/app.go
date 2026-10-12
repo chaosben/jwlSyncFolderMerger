@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/chaosben/jwlSyncFolderMerger/internal/dbwrite"
@@ -21,6 +22,7 @@ import (
 	"github.com/chaosben/jwlSyncFolderMerger/internal/jwltime"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/merge"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/model"
+	"github.com/chaosben/jwlSyncFolderMerger/internal/status"
 	"github.com/chaosben/jwlSyncFolderMerger/internal/syncadapter"
 )
 
@@ -41,7 +43,8 @@ type Config struct {
 	NoMarker        bool
 	Log             *slog.Logger
 	Now             func() time.Time
-	WorkDir         string // parent for temporary extraction, "" = system temp
+	WorkDir         string         // parent for temporary extraction, "" = system temp
+	Status          *status.Writer // status page, nil = none; never written in dry-run mode
 }
 
 type Outcome string
@@ -60,6 +63,8 @@ type Report struct {
 	Loss     merge.Loss
 	Actions  []string
 	Warnings []string
+	Current  *status.Current // current.jwlibrary after the run; nil if the run failed
+	Known    []status.Device // known devices after the run; nil if the run failed
 }
 
 type loaded struct {
@@ -79,6 +84,8 @@ type runner struct {
 	thumb string
 	files map[*merge.Snapshot]*jwlfile.File
 	ops   []op
+
+	newCurrent *model.DB // content of the current written by this run
 }
 
 type op struct {
@@ -137,12 +144,24 @@ func Run(ctx context.Context, cfg Config) (*Report, error) {
 	}
 	defer os.RemoveAll(r.work)
 	err = r.run()
+	if !cfg.DryRun {
+		// still under the lock, so parallel processes do not interleave
+		run, entries := statusRun(r.now, r.rep, err)
+		cfg.Status.Run(run, entries...)
+	}
 	return r.rep, err
 }
 
 func (r *runner) warn(msg string, args ...any) {
 	r.log.Warn(msg, args...)
-	r.rep.Warnings = append(r.rep.Warnings, fmt.Sprint(append([]any{msg}, args...)...))
+	var kv []string
+	for i := 0; i+1 < len(args); i += 2 {
+		kv = append(kv, fmt.Sprintf("%v: %v", args[i], args[i+1]))
+	}
+	if len(kv) > 0 {
+		msg += " (" + strings.Join(kv, ", ") + ")"
+	}
+	r.rep.Warnings = append(r.rep.Warnings, msg)
 }
 
 func (r *runner) load(path string) (*loaded, error) {
@@ -323,14 +342,20 @@ func (r *runner) run() error {
 		}
 	}
 
+	var curInfo *status.Current
+	if current != nil {
+		curInfo = currentInfo(current.snap.DB, current.snap.Time)
+	}
 	if len(r.rep.Devices) == 0 && current != nil {
 		r.rep.Outcome = NothingToDo
 		r.log.Info("no new device backups")
+		r.summarize(devices, names, curInfo)
 		return r.apply()
 	}
 	if len(sources) == 0 {
 		r.rep.Outcome = NothingToDo
 		r.log.Info("no device backups found")
+		r.summarize(devices, names, curInfo)
 		return r.apply()
 	}
 
@@ -362,6 +387,7 @@ func (r *runner) run() error {
 	if current != nil && merge.SameContent(current.snap.DB, res.DB) {
 		r.rep.Outcome = Unchanged
 		r.log.Info("merged content equals current, keeping it")
+		r.summarize(devices, names, curInfo)
 		return r.apply()
 	}
 
@@ -369,6 +395,7 @@ func (r *runner) run() error {
 		return err
 	}
 	r.rep.Outcome = Merged
+	r.summarize(devices, names, currentInfo(r.newCurrent, r.now))
 	return r.apply()
 }
 
@@ -506,6 +533,7 @@ func (r *runner) writeCurrent(db *model.DB, sources []*merge.Source, current *lo
 	if !merge.SameContent(db, check.snap.DB) || check.snap.DB.Marker != genID || check.file.DBHash != hash {
 		return errors.New("verify new current: content differs after writing")
 	}
+	r.newCurrent = check.snap.DB
 	r.log.Info("new current written", "generation", genID, "highlights", len(db.UserMarks), "notes", len(db.Notes),
 		"tags", len(db.Tags), "bookmarks", len(db.Bookmarks), "playlist_items", len(db.Playlists))
 

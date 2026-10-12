@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="300">
+<meta name="generator" content="jwlSyncFolderMerger {{.Version}}">
+<title>jwlSyncFolderMerger status</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #fff; --text: #1d2330; --muted: #5d6676; --line: #e3e6eb;
+  --ok: #1f7a3f; --ok-bg: #e5f4ea; --warn: #8a5a00; --warn-bg: #fdf1d8;
+  --err: #a8201a; --err-bg: #fbe4e2; --info: #1e5aa8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171c; --card: #1d2128; --text: #e4e7ec; --muted: #9aa3b2; --line: #2e333c;
+    --ok: #6fd38f; --ok-bg: #173323; --warn: #f0c060; --warn-bg: #3a2e12;
+    --err: #ff8b80; --err-bg: #3d1a18; --info: #8ab8ff;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 860px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.25rem; margin: 0 0 12px; }
+h2 { font-size: 1rem; margin: 0 0 8px; color: var(--muted); font-weight: 600; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; margin-bottom: 14px; overflow-x: auto; }
+.banner { border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; font-weight: 600; }
+.banner small { display: block; font-weight: 400; margin-top: 4px; overflow-wrap: anywhere; }
+.ok { background: var(--ok-bg); color: var(--ok); }
+.warning { background: var(--warn-bg); color: var(--warn); }
+.error { background: var(--err-bg); color: var(--err); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; }
+dt { color: var(--muted); }
+dd { margin: 0; overflow-wrap: anywhere; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 6px 8px 6px 0; border-top: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 600; border-top: 0; }
+td.time { white-space: nowrap; color: var(--muted); font-variant-numeric: tabular-nums; }
+td.sym { width: 1.5em; text-align: center; }
+.k-merged { color: var(--ok); } .k-guard, .k-error { color: var(--err); }
+.k-warning { color: var(--warn); } .k-update { color: var(--info); }
+.k-unchanged, .k-start, .k-stop { color: var(--muted); }
+footer { color: var(--muted); font-size: .85rem; }
+@media (max-width: 560px) { dl { grid-template-columns: 1fr; } dt { margin-top: 6px; } td.time { white-space: normal; } }
+</style>
+</head>
+<body>
+<main>
+<h1>jwlSyncFolderMerger</h1>
+
+<div id="stale" class="banner error" hidden>This page is outdated – jwlSyncFolderMerger is probably not running on {{.Host}}.
+<small>It should have been updated by {{when .StaleAfter}}.</small></div>
+
+<div class="banner {{.Level}}">{{.Headline}}{{with .LastRun}}{{if .Error}}<small>{{.Error}}</small>{{end}}{{end}}</div>
+
+<section>
+<h2>State</h2>
+<dl>
+<dt>Machine</dt><dd>{{.Host}} · version {{.Version}}</dd>
+<dt>Mode</dt><dd>{{if .Mode.Watch}}watch mode since {{when .Mode.Since}}{{if not .Mode.Stopped.IsZero}}, stopped {{when .Mode.Stopped}}{{end}}{{else}}one-off runs{{end}}</dd>
+{{- if .Mode.AutoUpdate}}
+<dt>Automatic updates</dt><dd>{{.Mode.AutoUpdate}}</dd>
+{{- end}}
+<dt>Last run</dt><dd>{{with .LastRun}}{{when .Time}} · {{outcome .Outcome}}{{if .Pending}} · {{.Pending}} backup(s) still syncing{{end}}{{if .Warnings}} · {{.Warnings}} warning(s){{end}}{{else}}–{{end}}</dd>
+<dt>Last merge</dt><dd>{{when .LastMerge}}</dd>
+{{- with .Current}}
+<dt>current.jwlibrary</dt><dd>{{when .Time}}{{if .Generation}} · generation {{.Generation}}{{end}}</dd>
+<dt>Content</dt><dd>{{.Highlights}} highlights · {{.Notes}} notes · {{.Tags}} tags · {{.Bookmarks}} bookmarks · {{.PlaylistItems}} playlist items</dd>
+{{- end}}
+</dl>
+</section>
+
+{{- if .Devices}}
+<section>
+<h2>Devices</h2>
+<table>
+<tr><th>Device</th><th>Last backup</th><th>Restored current</th></tr>
+{{- range .Devices}}
+<tr><td>{{.Name}}</td><td class="time">{{when .LastBackup}}</td><td>{{.RestoredText}}</td></tr>
+{{- end}}
+</table>
+</section>
+{{- end}}
+
+<section>
+<h2>Recent events</h2>
+{{- if .Entries}}
+<table>
+{{- range .Entries}}
+<tr class="k-{{.Kind}}"><td class="time">{{when .Time}}</td><td class="sym">{{symbol .Kind}}</td><td>{{.Text}}</td></tr>
+{{- end}}
+</table>
+{{- else}}
+<p>No events yet.</p>
+{{- end}}
+</section>
+
+<footer>Written {{when .Written}}{{if not .StaleAfter.IsZero}} · next update expected by {{when .StaleAfter}}{{end}}. Refreshes every 5 minutes when opened in a browser.</footer>
+</main>
+<script type="application/json" id="jwlsfm-status">{{.Data}}</script>
+{{- if not .StaleAfter.IsZero}}
+<script>
+if (Date.now() > Date.parse("{{iso .StaleAfter}}")) document.getElementById("stale").hidden = false;
+</script>
+{{- end}}
+</body>
+</html>
