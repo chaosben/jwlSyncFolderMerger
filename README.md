@@ -63,7 +63,9 @@ jwlSyncFolderMerger -sync syncthing <folder>            # merge
 
 A run without new backups does nothing, so calling it too often does no harm.
 A timer (cron, Task Scheduler) running this every few minutes is the middle
-ground between manual and watch mode.
+ground between manual and watch mode. Manual and timer runs do not update the
+tool by themselves; run `jwlSyncFolderMerger -update` now and then (see
+[Automatic updates](#automatic-updates)).
 
 ### 4. Other sync tools
 
@@ -90,6 +92,11 @@ automatically for every version):
 
 The archive contains a single executable without dependencies plus the
 `integrations/` folder. Alternatively build it yourself, see [Development](#development).
+
+You only download it once: in watch mode the tool installs new releases by itself
+(see [Automatic updates](#automatic-updates)). For that, put the executable in a
+directory your user can write to – the locations used below
+(`~/.local/bin`, `%LOCALAPPDATA%\jwlSyncFolderMerger`, `~/bin`) are.
 
 In all examples, `<folder>` is the synced backup folder.
 
@@ -121,6 +128,8 @@ journalctl --user -u jwlSyncFolderMerger-watch@jwlibrary -f   # logs
 
 ```
 */10 * * * * $HOME/.local/bin/jwlSyncFolderMerger -sync syncthing $HOME/Sync/JWLibrary >> $HOME/jwlSyncFolderMerger.log 2>&1
+# timer runs do not update themselves – check for a new release once a day:
+17 4 * * *   $HOME/.local/bin/jwlSyncFolderMerger -update >> $HOME/jwlSyncFolderMerger.log 2>&1
 ```
 
 ### Windows
@@ -195,7 +204,7 @@ device, so a browser or file manager on your phone is enough.
   part; the same warning or error is listed at most once a day.
 - `-status-entries` sets how many events are kept (default 50); `0` turns the page
   off. `-dry-run` never writes it.
-- In watch mode the page states when the next update is due at the latest; if it is
+- In watch mode the page states by when it will be rewritten at the latest; if it is
   older than that, it shows a warning that the tool is probably not running.
 
 The page is a single self-contained file without external resources; it also
@@ -296,9 +305,19 @@ Like Syncthing, the watch mode keeps itself up to date:
   development versions, or if the executable's directory is not writable (e.g.
   installed by a package manager) – the log says why at start.
 - The tool contacts `api.github.com` and `github.com` for this, nothing else.
+- You see what happened in the log and on the [status page](#status-page): whether
+  automatic updates are on (or why not), each installed version ("New version
+  installed … restarting", followed by "Watch mode started, version …") and failed
+  update checks as warnings.
+- On Windows, the replaced executable is kept as `jwlSyncFolderMerger.exe.old-…`
+  while the old process is still waiting; such files are removed at the next start.
+- To turn updates off in a service, add `-no-auto-update` to its arguments – see the
+  README of [systemd](integrations/systemd/), [Windows](integrations/windows/) or
+  [macOS](integrations/macos/).
 
 One-off runs (manual, cron, Task Scheduler) never update by themselves. Use
-`jwlSyncFolderMerger -update` (or `-update -dry-run` to only check).
+`jwlSyncFolderMerger -update` (or `-update -dry-run` to only check); it exits with
+`0` when the tool is up to date or was updated and `1` on errors.
 
 To verify a downloaded release by hand:
 
