@@ -9,11 +9,25 @@ folder (e.g. Syncthing) that all devices use to exchange their backups.
 
 ```mermaid
 flowchart LR
-    D1["Devices (phone, tablet, PC)"] -->|"1 · backup"| F[("Synced folder")]
-    F -->|"2 · new backups"| M["jwlSyncFolderMerger"]
-    M -->|"3 · merged result"| C["current.jwlibrary"]
-    C -->|"4 · restore"| D2["Devices"]
+    subgraph you1["You: back up"]
+        P1["📱 Phone"]
+        T1["📱 Tablet"]
+        C1["💻 PC"]
+    end
+    subgraph auto["Automatic – nothing to do"]
+        M(["✨ jwlSyncFolderMerger<br/>merges everything"])
+    end
+    subgraph you2["You: restore"]
+        P2["📱 Phone"]
+        T2["📱 Tablet"]
+        C2["💻 PC"]
+    end
+    P1 & T1 & C1 -->|"backup into<br/>synced folder"| M
+    M -->|"current.jwlibrary"| P2 & T2 & C2
 ```
+
+**That's all:** back up as usual, restore `current.jwlibrary` – your notes,
+highlights and bookmarks from all devices are merged.
 
 ## Workflow
 
@@ -23,6 +37,29 @@ flowchart LR
 3. The devices restore `current.jwlibrary` in JW Library.
 
 If there are no new backups, a run changes nothing.
+
+```mermaid
+sequenceDiagram
+    actor U as You
+    participant P as Phone (JW Library)
+    participant F as Synced folder
+    participant M as jwlSyncFolderMerger
+    participant T as Tablet (JW Library)
+
+    U->>P: Back up
+    P->>F: UserdataBackup_…_Phone.jwlibrary
+    F-->>M: change event (watch mode)
+    Note over M: wait until the file is stable (-min-age)
+    M->>M: take lock
+    M->>F: read current.jwlibrary, new backups,<br/>base per device from archive/devices/
+    M->>M: per device: detect changes against its base
+    M->>M: merge, safety check (max. 20 % deletions)
+    M->>F: write current.jwlibrary (verified, then put in place)
+    M->>F: move backups to archive/, keep previous generations
+    M->>F: update jwlsfm_status.html
+    F-->>T: sync current.jwlibrary
+    U->>T: Restore current.jwlibrary
+```
 
 ## Scenarios
 
